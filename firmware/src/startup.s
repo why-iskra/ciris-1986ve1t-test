@@ -17,7 +17,7 @@ __stack_top__:
 
     .section .heap
     .align	3
-    .equ	heap_size, 0x6000
+    .equ	heap_size, 0x2000
     .globl	__heap_start__
     .globl	__heap_end__
 __heap_start__:
@@ -90,7 +90,7 @@ __heap_end__:
     .globl	__isr_reset
     .type	__isr_reset, %function
 __isr_reset:
-    // cpsid i
+    cpsid i
     bl __start
     .size	__isr_reset, . - __isr_reset
 
