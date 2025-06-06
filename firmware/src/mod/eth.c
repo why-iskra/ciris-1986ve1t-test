@@ -5,7 +5,10 @@
 #include "mod/eth.h"
 #include "mod/regs.h"
 #include "utils/bits.h"
+#include <stdbool.h>
 #include <stddef.h>
+
+static mod_eth_handler_t handler = NULL;
 
 static void phy_setup(uint8_t address, uint8_t mode) {
     struct eth_regs *regs = get_eth_regs();
@@ -79,7 +82,19 @@ static void mac_setup(void) {
     regs->imr = 0x0101;
 }
 
+void __isr_ethernet(void);
+void __isr_ethernet(void) {
+    struct eth_regs *regs = get_eth_regs();
+    uint16_t status = regs->ifr;
+    if (get_bit(status, 0) && handler != NULL) {
+        handler();
+    }
+    regs->ifr = status;
+}
+
 void eth_setup(struct mod_eth_mac mac) {
+    handler = NULL;
+
     struct eth_regs *eth_regs = get_eth_regs();
     struct rst_clk_regs *clk_regs = get_rst_clk_regs();
 
@@ -91,38 +106,53 @@ void eth_setup(struct mod_eth_mac mac) {
 
     phy_setup(0x1c, 0x3);
 
-    for (size_t i = 0; i < sizeof(mac.value); i++) {
-        ((volatile uint8_t *) eth_regs->mac)[i] = mac.value[i];
+    for (size_t i = 0; i < sizeof(mac); i++) {
+        ((volatile uint8_t *) eth_regs->mac)[i] = ((uint8_t *) &mac)[i];
     }
 
     mac_setup();
 }
 
-int read_packet(struct mod_eth_frame *frame) {
+void eth_set_handler(mod_eth_handler_t func) {
+    handler = func;
+}
+
+struct mod_eth_mac eth_mac(void) {
+    return *((volatile struct mod_eth_mac *) get_eth_regs()->mac);
+}
+
+int eth_receive(struct mod_eth_frame *frame) {
     struct eth_regs *regs = get_eth_regs();
 
     uint16_t src = regs->r_head;
     uint16_t tail = regs->r_tail;
 
-    uint32_t status = *get_eth_buf(src);
-    src = (uint16_t) (src + 4) % 0x1000;
+    bool error = get_bits(regs->stat, 5, 0x3) == 0;
 
-    size_t size = status & 0x0000FFFF;
-    size_t received = 0;
-    for (; received < size && received < MOD_ETH_PAYLOAD_SIZE; received++) {
-        frame->payload_word[received] = *get_eth_buf(src);
+    if (!error) {
+        uint32_t status = *get_eth_buf(src);
         src = (uint16_t) (src + 4) % 0x1000;
+
+        size_t size = status & 0x0000FFFF;
+        size_t received = 0;
+        for (; received < size && received < MOD_ETH_PAYLOAD_SIZE; received++) {
+            frame->payload_word[received] = *get_eth_buf(src);
+            src = (uint16_t) (src + 4) % 0x1000;
+        }
+
+        regs->r_head = tail;
+        regs->stat -= 0x20;
+
+        error = size > MOD_ETH_PAYLOAD_SIZE;
+        frame->received = received;
+    } else {
+        frame->received = 0;
     }
 
-    regs->r_head = tail;
-    regs->stat -= 0x20;
-
-    frame->received = received;
-
-    return size > MOD_ETH_PAYLOAD_SIZE ? -1 : 0;
+    return error ? -1 : 0;
 }
 
-int send_packet(const void *data, size_t size) {
+int eth_send(const void *data, size_t size) {
     struct eth_regs *regs = get_eth_regs();
 
     if (size > MOD_ETH_PAYLOAD_SIZE) {
