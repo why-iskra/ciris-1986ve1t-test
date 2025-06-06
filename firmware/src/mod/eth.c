@@ -98,65 +98,34 @@ void eth_setup(struct mod_eth_mac mac) {
     mac_setup();
 }
 
-// uint32_t read_packet(struct mod_eth_frame *frame) {
-//     struct eth_regs *regs = get_eth_regs();
-//
-//     uint16_t tail = regs->r_tail;
-//     uint16_t head = regs->r_head;
-//     uint16_t space_start = 0;
-//     uint16_t space_end = 0;
-//
-//     if (tail > head) {
-//         space_end = tail - head;
-//         space_start = 0;
-//     } else {
-//         space_end = 0x1000 - head;
-//         space_start = tail;
-//     }
-//
-//     uint32_t *src = (uint32_t *) (ETH_BUF_BASE + head);
-//     uint32_t *dest = (uint32_t *) (frame->data);
-//
-//     uint16_t tmp[2];
-//
-//     *((uint32_t *) tmp) = *src++;
-//     space_end -= 4;
-//
-//     if ((((uintptr_t) src) & 0x0000FFFF) > 0xFFF) {
-//         src = (uint32_t *) ETH_BUF_BASE;
-//     }
-//
-//     size_t size = (tmp[0] + 3) / 4;
-//     if (tmp[0] <= space_end) {
-//         for (size_t i = 0; i < size; i++) {
-//             *dest++ = *src++;
-//         }
-//     } else {
-//         size = size - space_end / 4;
-//         for (size_t i = 0; i < (space_end / 4); i++) {
-//             *dest++ = *src++;
-//         }
-//
-//         src = (uint32_t *) ETH_BUF_BASE;
-//         for (size_t i = 0; i < size; i++) {
-//             *dest++ = *src++;
-//         }
-//     }
-//
-//     if ((((uintptr_t) src) & 0x0000FFFF) > 0xFFF) {
-//         src = (uint32_t *) ETH_BUF_BASE;
-//     }
-//
-//     regs->r_head = (uint16_t) (((uintptr_t) src) & 0x0000FFFF);
-//     regs->stat -= 0x20;
-//
-//     return tmp[0];
-// }
+int read_packet(struct mod_eth_frame *frame) {
+    struct eth_regs *regs = get_eth_regs();
+
+    uint16_t src = regs->r_head;
+    uint16_t tail = regs->r_tail;
+
+    uint32_t status = *get_eth_buf(src);
+    src = (uint16_t) (src + 4) % 0x1000;
+
+    size_t size = status & 0x0000FFFF;
+    size_t received = 0;
+    for (; received < size && received < MOD_ETH_PAYLOAD_SIZE; received++) {
+        frame->payload_word[received] = *get_eth_buf(src);
+        src = (uint16_t) (src + 4) % 0x1000;
+    }
+
+    regs->r_head = tail;
+    regs->stat -= 0x20;
+
+    frame->received = received;
+
+    return size > MOD_ETH_PAYLOAD_SIZE ? -1 : 0;
+}
 
 int send_packet(const void *data, size_t size) {
     struct eth_regs *regs = get_eth_regs();
 
-    if (size > 3072) {
+    if (size > MOD_ETH_PAYLOAD_SIZE) {
         return -1;
     }
 
