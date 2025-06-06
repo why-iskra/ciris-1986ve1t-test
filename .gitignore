@@ -1,0 +1,8 @@
+.cache
+.direnv
+build*
+
+compile_commands.json
+extra/1986ve1t.cross
+.clangd
+flake.nix
