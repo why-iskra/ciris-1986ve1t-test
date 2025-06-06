@@ -14,3 +14,4 @@ typedef enum {
 void drv_clock_init(void);
 
 int clock_delay(uint32_t, drv_clock_unit_t);
+uint32_t clock_millis(void);

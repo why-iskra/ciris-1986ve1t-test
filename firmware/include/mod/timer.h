@@ -12,6 +12,7 @@
         .initial_value = 0, \
         .trigger_value = 0, \
         .freq_div = 0, \
+        .tim_div = 0, \
         .reverse = false, \
         .interrupt.zero = false, \
         .interrupt.trigger = false \
@@ -27,6 +28,7 @@ struct mod_timer_cfg {
     uint32_t initial_value;
     uint32_t trigger_value;
     uint16_t freq_div;
+    uint8_t tim_div;
     bool reverse;
     struct {
         bool zero;

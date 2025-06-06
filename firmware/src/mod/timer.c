@@ -42,6 +42,16 @@ int timer_setup(mod_timer_t timer, struct mod_timer_cfg cfg) {
         set_bit(regs->ie, 1, 1);
     }
 
+    struct rst_clk_regs *clk_regs = get_rst_clk_regs();
+    switch (timer) {
+        case MOD_TIMER_1:
+            set_bits(clk_regs->tim_clock, 0, 0x7, cfg.tim_div);
+            break;
+        case MOD_TIMER_2:
+            set_bits(clk_regs->tim_clock, 8, 0x7, cfg.tim_div);
+            break;
+    }
+
     set_bit(regs->cntrl, 3, cfg.reverse);
     set_bit(regs->cntrl, 0, 1);
 

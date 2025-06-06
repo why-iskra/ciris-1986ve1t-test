@@ -8,6 +8,7 @@
 #include "drv/udpsrv.h"
 #include "mod/clk.h"
 #include "mod/watchdog.h"
+#include <stdio.h>
 
 static struct mod_eth_mac mac = { 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc };
 
@@ -20,7 +21,10 @@ int main(void) {
     drv_udpsrv_init(mac, NULL);
 
     while (true) {
+        terminal_clear();
+        printf("%u", clock_millis());
+        fflush(stdout);
         iwdt_notify();
-        clock_delay(250, DRV_CLOCK_UNIT_MS);
+        clock_delay(1000, DRV_CLOCK_UNIT_MS);
     }
 }
