@@ -5,24 +5,19 @@
 #include "drv/clock.h"
 #include "config.h"
 #include "mod/clk.h"
-#include "mod/nvic.h"
+#include "mod/scb/systick.h"
 #include "mod/timer.h"
 #include <stdbool.h>
 
-static volatile bool delay_end = false;
+static volatile bool systick_end;
 
-void __isr_timer1(void);
-void __isr_timer1(void) {
-    if (timer_trigger(MOD_TIMER_1, true)) {
-        timer_control(MOD_TIMER_1, false);
-        delay_end = true;
-    }
+void __isr_systick(void);
+void __isr_systick(void) {
+    systick_end = true;
+    scb_systick_setup(scb_systick_default_cfg());
 }
 
 void drv_clock_init(void) {
-    clk_en_peripheral(MOD_CLK_PERIPHERAL_TIMER1, true);
-    nvic_irq_en(MOD_NVIC_IRQ_TIMER1, true);
-
     clk_en_peripheral(MOD_CLK_PERIPHERAL_TIMER2, true);
     struct mod_timer_cfg timer_cfg = timer_default_cfg();
     timer_cfg.enable = true;
@@ -33,36 +28,24 @@ void drv_clock_init(void) {
     timer_control(MOD_TIMER_2, true);
 }
 
-int clock_delay(uint32_t value, drv_clock_unit_t unit) {
-    struct mod_timer_cfg timer_cfg = timer_default_cfg();
-    timer_cfg.enable = true;
-    timer_cfg.interrupt.trigger = true;
+void clock_delay_us(uint8_t value) {
+    struct mod_scb_systick_cfg cfg = scb_systick_default_cfg();
+    cfg.enable = true;
+    cfg.interrupt = true;
+    cfg.load = 8 * (clk_get_cpu_freq() / BASE_FREQ_HZ) * value;
 
-    uint16_t cpuf_mul = clk_get_cpu_freq() / BASE_FREQ_HZ;
-    switch (unit) {
-        case DRV_CLOCK_UNIT_MS: {
-            timer_cfg.freq_div = (1000 * cpuf_mul) - 1;
-            timer_cfg.tim_div = 3;
-            break;
-        }
-        case DRV_CLOCK_UNIT_US: {
-            timer_cfg.freq_div = cpuf_mul - 1;
-            timer_cfg.tim_div = 3;
-            break;
-        }
-        default: return -1;
+    systick_end = false;
+    scb_systick_setup(cfg);
+    while (!systick_end) { }
+}
+
+void clock_delay_ms(uint32_t ms) {
+    for (uint32_t i = 0; i < ms; i++) {
+        clock_delay_us(250);
+        clock_delay_us(250);
+        clock_delay_us(250);
+        clock_delay_us(250);
     }
-
-    timer_cfg.trigger_value = value;
-
-    delay_end = false;
-
-    timer_setup(MOD_TIMER_1, timer_cfg);
-    timer_control(MOD_TIMER_1, true);
-    while (!delay_end) { }
-    timer_control(MOD_TIMER_1, false);
-
-    return 0;
 }
 
 uint32_t clock_millis(void) {

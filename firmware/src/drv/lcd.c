@@ -15,7 +15,7 @@
 #define LCD_DATA2 (*((uint32_t *) 0x74000000))
 
 static void cmd_delay(void) {
-    clock_delay(8, DRV_CLOCK_UNIT_US);
+    clock_delay_us(8);
 }
 
 void lcd_setstartline(uint8_t line) {
