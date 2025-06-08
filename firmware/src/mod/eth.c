@@ -51,6 +51,8 @@ static void mac_setup(void) {
     set_bit(regs->r_cfg, 1, 1);
     set_bit(regs->r_cfg, 2, 1);
     set_bits(regs->r_cfg, 8, 0x7, 0x4);
+    set_bit(regs->x_cfg, 12, 0);
+    set_bit(regs->x_cfg, 13, 0);
     set_bit(regs->r_cfg, 15, 1);
 
     set_bits(regs->x_cfg, 0, 0xf, 10);
@@ -59,11 +61,14 @@ static void mac_setup(void) {
     set_bit(regs->x_cfg, 6, 1);
     set_bit(regs->x_cfg, 7, 1);
     set_bits(regs->x_cfg, 8, 0x7, 0x1);
+    set_bit(regs->x_cfg, 12, 0);
+    set_bit(regs->x_cfg, 13, 0);
     set_bit(regs->x_cfg, 15, 1);
 
     regs->g_cfg = 0;
     set_bits(regs->g_cfg, 0, 0xff, 128);
     set_bits(regs->g_cfg, 12, 0x3, 0);
+    set_bit(regs->g_cfg, 14, 0);
     set_bit(regs->g_cfg, 28, 1);
     set_bit(regs->g_cfg, 29, 1);
     set_bit(regs->g_cfg, 16, 1);
@@ -86,7 +91,9 @@ void __isr_ethernet(void);
 void __isr_ethernet(void) {
     struct eth_regs *regs = get_eth_regs();
     uint16_t status = regs->ifr;
-    if (get_bit(status, 0) && handler != NULL) {
+    bool received = get_bit(status, 0);
+    bool overflow = get_bit(status, 2);
+    if (received && !overflow && handler != NULL) {
         handler();
     }
     regs->ifr = status;
@@ -124,51 +131,52 @@ struct mod_eth_mac eth_mac(void) {
 int eth_receive(struct mod_eth_frame *frame) {
     struct eth_regs *regs = get_eth_regs();
 
-    uint16_t src = regs->r_head;
+    uint16_t head = regs->r_head;
     uint16_t tail = regs->r_tail;
+    uint8_t packets = get_bits(regs->stat, 5, 0x3);
 
-    bool error = get_bits(regs->stat, 5, 0x3) == 0;
-
-    if (!error) {
-        uint32_t status = *get_eth_buf(src);
-        src = (uint16_t) (src + 4) % 0x1000;
-
-        size_t size = status & 0x0000FFFF;
-        size_t received = 0;
-        for (; received < size && received < MOD_ETH_PAYLOAD_SIZE; received++) {
-            frame->payload_word[received] = *get_eth_buf(src);
-            src = (uint16_t) (src + 4) % 0x1000;
-        }
-
-        regs->r_head = tail;
-        regs->stat -= 0x20;
-
-        error = size > MOD_ETH_PAYLOAD_SIZE;
-        frame->received = received;
-    } else {
-        frame->received = 0;
+    /*
+     * NOTE: eth does not accept packets until the received one is processed
+     * therefore, check for 1
+     */
+    if (packets != 1) {
+        frame->size = 0;
+        return -1;
     }
 
-    return error ? -1 : 0;
+    size_t size = tail > head ? tail - head : head - tail;
+    uint16_t src = head;
+
+    src = (uint16_t) (src + 4) % 0x1000;
+    for (size_t i = 0; src != tail && i * 4 < MOD_ETH_PAYLOAD_SIZE; i++) {
+        frame->payload_word[i] = *get_eth_buf(src);
+        src = (uint16_t) (src + 4) % 0x1000;
+    }
+
+    regs->r_head = tail;
+    regs->stat -= 0x20;
+
+    frame->size = size;
+    return size > MOD_ETH_PAYLOAD_SIZE ? -1 : 0;
 }
 
-int eth_send(const void *data, size_t size) {
+int eth_send(struct mod_eth_frame *frame) {
     struct eth_regs *regs = get_eth_regs();
 
-    if (size > MOD_ETH_PAYLOAD_SIZE) {
+    if (frame->size > MOD_ETH_PAYLOAD_SIZE) {
         return -1;
     }
 
     uint16_t dest = regs->x_tail;
 
-    *get_eth_buf(dest) = size;
+    *get_eth_buf(dest) = frame->size;
     dest = (uint16_t) ((dest + 4) - 0x1000) % 0x1000 + 0x1000;
 
-    for (size_t i = 0; i < size;) {
+    for (size_t i = 0; i < frame->size;) {
         uint32_t word = 0;
 
-        for (size_t k = 0; k < sizeof(word) && i < size; k++, i++) {
-            word |= ((uint32_t) ((const uint8_t *) data)[i]) << (k * 8);
+        for (size_t k = 0; k < sizeof(word) && i < frame->size; k++, i++) {
+            word |= ((uint32_t) (frame->payload[i]) << (k * 8));
         }
 
         *get_eth_buf(dest) = word;

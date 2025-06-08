@@ -21,7 +21,7 @@ struct mod_eth_mac {
 } __attribute__((packed));
 
 struct mod_eth_frame {
-    size_t received;
+    size_t size;
     union {
         uint8_t payload[MOD_ETH_PAYLOAD_SIZE];
         uint32_t payload_word[MOD_ETH_PAYLOAD_SIZE / 4];
@@ -32,4 +32,4 @@ void eth_setup(struct mod_eth_mac);
 void eth_set_handler(mod_eth_handler_t);
 struct mod_eth_mac eth_mac(void);
 int eth_receive(struct mod_eth_frame *);
-int eth_send(const void *, size_t);
+int eth_send(struct mod_eth_frame *);
