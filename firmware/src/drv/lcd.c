@@ -3,10 +3,10 @@
 //
 
 #include "drv/lcd.h"
-#include "drv/clock.h"
 #include "mod/clk.h"
 #include "mod/extbus.h"
 #include "mod/port.h"
+#include "mod/asm.h"
 
 #define LCD_CMD1 (*((uint32_t *) 0x68000000))
 #define LCD_CMD2 (*((uint32_t *) 0x70000000))
@@ -15,7 +15,9 @@
 #define LCD_DATA2 (*((uint32_t *) 0x74000000))
 
 static void cmd_delay(void) {
-    clock_delay_us(1);
+    for (int i = 0; i < 64; i ++) {
+        asm_nop();
+    }
 }
 
 void lcd_setstartline(uint8_t line) {
