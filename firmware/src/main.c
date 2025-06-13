@@ -6,6 +6,7 @@
 #include "drv/lcd.h"
 #include "drv/terminal.h"
 #include "drv/udpsrv.h"
+#include "drv/udpsrv/utils.h"
 #include "mod/clk.h"
 #include "mod/port.h"
 #include "mod/watchdog.h"
@@ -27,16 +28,26 @@
 #define BTN_LEFT   MOD_PORT_E, 10
 
 typedef enum {
-    CMD_TYPE_LED = 0,
-    CMD_TYPE_BTN = 1,
-    CMD_TYPE_LCD_WRITE = 2,
-    CMD_TYPE_LCD_SETCUR = 3,
-    CMD_TYPE_LCD_CLEAR = 4,
+    CMD_TYPE_ECHO_REQUEST = 0,
+    CMD_TYPE_ECHO_RESPONSE = 1,
+    CMD_TYPE_LED = 2,
+    CMD_TYPE_BTN_REQUEST = 3,
+    CMD_TYPE_BTN_RESPONSE = 4,
+    CMD_TYPE_LCD_WRITE = 5,
+    CMD_TYPE_LCD_SETCUR = 6,
+    CMD_TYPE_LCD_CLEAR = 7,
 } cmd_type_t;
 
 struct cmd {
     uint32_t type;
     union {
+        struct {
+            struct drv_udpsrv_ip ip;
+        } echo_request;
+        struct {
+            struct mod_eth_mac mac;
+            struct drv_udpsrv_ip ip;
+        } echo_response;
         struct {
             uint8_t val1;
             uint8_t val2;
@@ -44,13 +55,16 @@ struct cmd {
             uint8_t val4;
         } led;
         struct {
+            struct drv_udpsrv_ip ip;
+        } button_request;
+        struct {
             uint8_t left;
             uint8_t right;
             uint8_t top;
             uint8_t bottom;
             uint8_t select;
             uint8_t back;
-        } button;
+        } button_response;
         struct {
             char text[16];
         } lcd_write;
@@ -64,7 +78,9 @@ struct cmd {
 
 struct cmd_extended {
     struct cmd cmd;
-    struct drv_udpsrv_ip ip;
+    struct mod_eth_mac server_mac;
+    struct drv_udpsrv_ip server_ip;
+    struct drv_udpsrv_ip src_ip;
 };
 
 static struct mod_eth_mac mac = { 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc };
@@ -110,7 +126,9 @@ static void handler(const void *data, size_t size, struct udp_info info) {
 
     struct cmd_extended extended = {
         .cmd = *cmd,
-        .ip = info.src_ip,
+        .server_mac = info.server_mac,
+        .server_ip = info.server_ip,
+        .src_ip = info.src_ip,
     };
 
     cmd_queue_push(extended);
@@ -132,6 +150,23 @@ static bool read_button(mod_port_t port, int pin) {
 static void handle_cmd(struct cmd_extended extended) {
     struct cmd cmd = extended.cmd;
     switch ((cmd_type_t) cmd.type) {
+        case CMD_TYPE_ECHO_REQUEST: {
+            struct cmd response = {
+                .type = CMD_TYPE_ECHO_RESPONSE,
+                .echo_response.mac = extended.server_mac,
+                .echo_response.ip = extended.server_ip,
+                .magic = CMD_MAGIC,
+            };
+
+            struct drv_udpsrv_ip dest_ip = cmd.echo_request.ip;
+            if (ip_eq(dest_ip, ZERO_IP)) {
+                dest_ip = extended.src_ip;
+            }
+
+            udpsrv_send(dest_ip, 30000, 30000, &response, sizeof(response));
+            break;
+        }
+        case CMD_TYPE_ECHO_RESPONSE: break;
         case CMD_TYPE_LED: {
             port_write(LED1, cmd.led.val1 > 0);
             port_write(LED2, cmd.led.val2 > 0);
@@ -139,21 +174,27 @@ static void handle_cmd(struct cmd_extended extended) {
             port_write(LED4, cmd.led.val4 > 0);
             break;
         }
-        case CMD_TYPE_BTN: {
+        case CMD_TYPE_BTN_REQUEST: {
             struct cmd response = {
-                .type = CMD_TYPE_BTN,
-                .button.left = read_button(BTN_LEFT) ? 0xff : 0x00,
-                .button.right = read_button(BTN_RIGHT) ? 0xff : 0x00,
-                .button.top = read_button(BTN_TOP) ? 0xff : 0x00,
-                .button.bottom = read_button(BTN_BOTTOM) ? 0xff : 0x00,
-                .button.select = read_button(BTN_SELECT) ? 0xff : 0x00,
-                .button.back = read_button(BTN_BACK) ? 0xff : 0x00,
+                .type = CMD_TYPE_BTN_RESPONSE,
+                .button_response.left = read_button(BTN_LEFT) ? 0xff : 0x00,
+                .button_response.right = read_button(BTN_RIGHT) ? 0xff : 0x00,
+                .button_response.top = read_button(BTN_TOP) ? 0xff : 0x00,
+                .button_response.bottom = read_button(BTN_BOTTOM) ? 0xff : 0x00,
+                .button_response.select = read_button(BTN_SELECT) ? 0xff : 0x00,
+                .button_response.back = read_button(BTN_BACK) ? 0xff : 0x00,
                 .magic = CMD_MAGIC,
             };
 
-            udpsrv_send(extended.ip, 30000, 30000, &response, sizeof(response));
+            struct drv_udpsrv_ip dest_ip = cmd.button_request.ip;
+            if (ip_eq(dest_ip, ZERO_IP)) {
+                dest_ip = extended.src_ip;
+            }
+
+            udpsrv_send(dest_ip, 30000, 30000, &response, sizeof(response));
             break;
         }
+        case CMD_TYPE_BTN_RESPONSE: break;
         case CMD_TYPE_LCD_WRITE: {
             for (size_t i = 0; i < sizeof(cmd.lcd_write.text); i++) {
                 char c = cmd.lcd_write.text[i];
