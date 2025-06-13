@@ -83,6 +83,22 @@ void frame_setup_arp(
     result->target_ip = target_ip;
 }
 
+bool frame_valid_arp(struct mod_eth_frame *frame, arp_opcode_t opcode) {
+    struct arp_frame *result = (struct arp_frame *) frame->payload;
+
+    if (result->hardware_type != ARP_HARDWARE_TYPE_ETHERNET
+        || result->hardware_size != sizeof(struct mod_eth_mac)) {
+        return false;
+    }
+
+    if (result->protocol_type != ARP_PROTOCOL_TYPE_IPV4
+        || result->protocol_size != sizeof(struct drv_udpsrv_ip)) {
+        return false;
+    }
+
+    return result->opcode == opcode;
+}
+
 void frame_setup_ipv4(
     struct mod_eth_frame *frame,
     ipv4_protocol_t protocol,

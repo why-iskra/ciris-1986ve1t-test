@@ -120,6 +120,8 @@ void frame_setup_arp(
     struct drv_udpsrv_ip
 );
 
+bool frame_valid_arp(struct mod_eth_frame *, arp_opcode_t);
+
 void frame_setup_ipv4(
     struct mod_eth_frame *,
     ipv4_protocol_t,
