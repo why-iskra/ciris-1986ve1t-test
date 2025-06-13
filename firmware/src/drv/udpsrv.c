@@ -54,6 +54,7 @@ static struct {
 
     uint32_t timestamp;
     struct drv_udpsrv_ip src_ip;
+    struct drv_udpsrv_ip mask;
     struct mod_eth_mac dest_mac;
 } user;
 
@@ -72,7 +73,7 @@ static void send_packet(struct mod_eth_frame *frame) {
 
 // process
 
-static void external_handle(void) {
+static void external_handler(void) {
     if (temp_frame.size < sizeof(struct udp_frame)) {
         return;
     }
@@ -83,7 +84,11 @@ static void external_handle(void) {
     struct udp_frame *udp_frame = (struct udp_frame *) temp_frame.payload;
 
     if (!mac_eq(ethernet_frame->dest_mac, eth_mac())
-        || ethernet_frame->ethertype != ETHERTYPE_IPV4) {
+        && !mac_eq(ethernet_frame->dest_mac, BROADCAST_MAC)) {
+        return;
+    }
+
+    if (ethernet_frame->ethertype != ETHERTYPE_IPV4) {
         return;
     }
 
@@ -92,14 +97,11 @@ static void external_handle(void) {
     }
 
     struct drv_udpsrv_ip mask = dynip_mask();
-
     struct drv_udpsrv_ip ip = dynip_get();
-    struct drv_udpsrv_ip masked_ip = ip_mask(ip, mask);
-
     struct drv_udpsrv_ip dest_ip = ipv4_frame->dest_ip;
-    struct drv_udpsrv_ip masked_dest_ip = ip_mask(dest_ip, mask);
-
-    if (!ip_eq(dest_ip, ip) || !ip_eq(masked_dest_ip, masked_ip)) {
+    struct drv_udpsrv_ip broadcast_ip = ip_broadcast_mask(ip, mask);
+    if (!ip_eq(dest_ip, ip) && !ip_eq(dest_ip, BROADCAST_IP)
+        && !ip_eq(dest_ip, broadcast_ip)) {
         return;
     }
 
@@ -110,6 +112,8 @@ static void external_handle(void) {
     frame_normalize_udp(&temp_frame);
 
     struct udp_info info = {
+        .server_mac = eth_mac(),
+        .server_ip = ip,
         .src_ip = ipv4_frame->src_ip,
         .dest_ip = ipv4_frame->dest_ip,
         .mask = mask,
@@ -162,7 +166,7 @@ static void handle(void) {
     }
 
     if (udp_handler != NULL) {
-        external_handle();
+        external_handler();
     }
 }
 
@@ -187,12 +191,13 @@ static void process_state_ready(void) {
 
     if (user.has) {
         user.src_ip = dynip_get();
+        user.mask = dynip_mask();
         state = STATE_USER_ARP_REQUEST;
     }
 }
 
 static void process_state_user_arp_request(void) {
-    if (arp_table_get_ip(user.dest_ip, &user.dest_mac)) {
+    if (arp_table_get_ip(user.dest_ip, user.src_ip, user.mask, &user.dest_mac)) {
         state = STATE_USER_SEND;
         return;
     }
@@ -260,7 +265,7 @@ static void process_state_dhcp_finish(void) {
 }
 
 static void process_state_dhcp_failed(void) {
-    dhcp.attempts ++;
+    dhcp.attempts++;
     if (dhcp.attempts > DHCP_RETRY_ATTEMPTS) {
         dynip_set(default_ip, default_mask, STATIC_IP_RENT_MS);
         state = STATE_READY;

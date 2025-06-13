@@ -25,6 +25,8 @@ struct drv_udpsrv_ip {
 } __attribute__((packed));
 
 struct udp_info {
+    struct mod_eth_mac server_mac;
+    struct drv_udpsrv_ip server_ip;
     struct drv_udpsrv_ip src_ip;
     struct drv_udpsrv_ip dest_ip;
     struct drv_udpsrv_ip mask;

@@ -22,15 +22,25 @@ void arp_init(void) {
     }
 }
 
-bool arp_table_get_ip(struct drv_udpsrv_ip ip, struct mod_eth_mac *mac) {
-    if (ip_eq(ip, BROADCAST_IP)) {
+bool arp_table_get_ip(
+    struct drv_udpsrv_ip search_ip,
+    struct drv_udpsrv_ip ip,
+    struct drv_udpsrv_ip mask,
+    struct mod_eth_mac *mac
+) {
+    if (ip_eq(search_ip, BROADCAST_IP)) {
+        *mac = BROADCAST_MAC;
+        return true;
+    }
+
+    if (ip_eq(search_ip, ip_broadcast_mask(ip, mask))) {
         *mac = BROADCAST_MAC;
         return true;
     }
 
     for (size_t i = 0; i < ARP_TABLE_SIZE; i++) {
         struct arp_table_element *elem = arp_table + i;
-        if (elem->valid && ip_eq(ip, elem->ip)) {
+        if (elem->valid && ip_eq(search_ip, elem->ip)) {
             *mac = elem->mac;
             return true;
         }

@@ -13,11 +13,11 @@ bool ip_eq(struct drv_udpsrv_ip a, struct drv_udpsrv_ip b) {
     return memcmp(&a, &b, sizeof(struct drv_udpsrv_ip)) == 0;
 }
 
-struct drv_udpsrv_ip ip_mask(struct drv_udpsrv_ip ip, struct drv_udpsrv_ip mask) {
+struct drv_udpsrv_ip ip_broadcast_mask(struct drv_udpsrv_ip ip, struct drv_udpsrv_ip mask) {
     return (struct drv_udpsrv_ip) {
-        .octet1 = ip.octet1 & mask.octet1,
-        .octet2 = ip.octet2 & mask.octet2,
-        .octet3 = ip.octet3 & mask.octet3,
-        .octet4 = ip.octet4 & mask.octet4,
+        .octet1 = ip.octet1 | ~mask.octet1,
+        .octet2 = ip.octet2 | ~mask.octet2,
+        .octet3 = ip.octet3 | ~mask.octet3,
+        .octet4 = ip.octet4 | ~mask.octet4,
     };
 }
