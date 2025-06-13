@@ -27,4 +27,4 @@ struct drv_udpsrv_ip {
 typedef void (*drv_udpsrv_handler_t)(const void *, size_t);
 
 void drv_udpsrv_init(struct mod_eth_mac, struct drv_udpsrv_ip, drv_udpsrv_handler_t);
-int udpsrv_send(void);
+int udpsrv_send(struct drv_udpsrv_ip, uint16_t, uint16_t, const void *, size_t);

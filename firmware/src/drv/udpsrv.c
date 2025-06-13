@@ -5,23 +5,28 @@
 #include "drv/udpsrv.h"
 #include "config.h"
 #include "drv/clock.h"
-#include "drv/udpsrv/arptable.h"
+#include "drv/udpsrv/arp.h"
 #include "drv/udpsrv/dhcp.h"
 #include "drv/udpsrv/dynip.h"
 #include "drv/udpsrv/frames.h"
-#include "drv/udpsrv/utils.h"
 #include "mod/clk.h"
 #include "mod/nvic.h"
 #include "mod/port.h"
 #include "mod/timer.h"
+#include <memory.h>
 
 #define ORANGE_LED  MOD_PORT_B, 14
 #define GREEN_LED   MOD_PORT_B, 15
 #define CONNECT_LED MOD_PORT_D, 8
+#define USER_LED    MOD_PORT_D, 9
 
 typedef enum {
     STATE_INIT,
     STATE_READY,
+    STATE_USER_ARP_REQUEST,
+    STATE_USER_ARP_ANSWER,
+    STATE_USER_SEND,
+    STATE_USER_FAILED,
     STATE_DHCP_DISCOVER,
     STATE_DHCP_OFFER,
     STATE_DHCP_REQUEST,
@@ -33,11 +38,22 @@ typedef enum {
 static drv_udpsrv_handler_t udp_handler;
 static struct drv_udpsrv_ip default_ip;
 
-static struct mod_eth_frame recevice_frame;
-static struct mod_eth_frame send_frame;
+static struct mod_eth_frame temp_frame;
 static struct mod_eth_frame user_frame;
 
 static state_t state;
+
+static struct {
+    bool has;
+    size_t size;
+    struct drv_udpsrv_ip dest_ip;
+    uint16_t src_port;
+    uint16_t dest_port;
+
+    uint32_t timestamp;
+    struct drv_udpsrv_ip src_ip;
+    struct mod_eth_mac dest_mac;
+} user;
 
 static struct {
     uint32_t xid;
@@ -45,104 +61,38 @@ static struct {
     struct dhcp_offer offer;
 } dhcp;
 
-// send
-
 static void send_packet(struct mod_eth_frame *frame) {
     port_write(GREEN_LED, 1);
     eth_send(frame);
     port_write(GREEN_LED, 0);
 }
 
-// handlers
+// process
 
-static void handle_arp_request(void) {
-    struct arp_frame *arp_frame = (struct arp_frame *) recevice_frame.payload;
-
-    struct drv_udpsrv_ip ip = dynip_get();
-    if (!ip_eq(ip, arp_frame->target_ip)) {
-        return;
-    }
-
-    frame_setup_ethernet(&send_frame, arp_frame->sender_mac, ETHERTYPE_ARP);
-
-    frame_setup_arp(
-        &send_frame,
-        ARP_OPCODE_ANSWER,
-        eth_mac(),
-        ip,
-        arp_frame->sender_mac,
-        arp_frame->sender_ip
-    );
-
-    send_frame.size = sizeof(struct arp_frame);
-
-    send_packet(&send_frame);
-}
-
-static void handle_arp_answer(void) {
-    struct arp_frame *arp_frame = (struct arp_frame *) recevice_frame.payload;
-    if (!mac_eq(eth_mac(), arp_frame->target_mac)) {
-        return;
-    }
-
-    if (!ip_eq(dynip_get(), arp_frame->target_ip)) {
-        return;
-    }
-
-    arp_table_set_ip(arp_frame->sender_ip, arp_frame->sender_mac);
-}
-
-static void handle_arp(void) {
-    if (recevice_frame.size < sizeof(struct arp_frame)) {
-        return;
-    }
-
-    struct arp_frame *arp_frame = (struct arp_frame *) recevice_frame.payload;
-
-    if (arp_frame->hardware_type != ARP_HARDWARE_TYPE_ETHERNET
-        || arp_frame->protocol_type != ARP_PROTOCOL_TYPE_IPV4) {
-        return;
-    }
-
-    if (arp_frame->hardware_size != sizeof(struct mod_eth_mac)
-        || arp_frame->protocol_size != sizeof(struct drv_udpsrv_ip)) {
-        return;
-    }
-
-    if (arp_frame->opcode == ARP_OPCODE_REQUEST) {
-        handle_arp_request();
-    } else if (arp_frame->opcode == ARP_OPCODE_ANSWER) {
-        handle_arp_answer();
-    }
-}
-
-static void handle_ipv4(void) {
-    if (recevice_frame.size < sizeof(struct ipv4_frame)) {
-        return;
-    }
-
-    struct ipv4_frame *ipv4_frame =
-        (struct ipv4_frame *) recevice_frame.payload;
-}
-
-static void handle_ethernet(void) {
+static void handle(void) {
     switch (state) {
-        case STATE_INIT: return;
-        case STATE_DHCP_DISCOVER: return;
+        case STATE_USER_ARP_ANSWER: {
+            if (arp_answer(&temp_frame, user.src_ip, &user.dest_mac)) {
+                state = STATE_USER_SEND;
+            }
+            break;
+        }
         case STATE_DHCP_OFFER: {
-            if (dhcp_offer(&recevice_frame, dhcp.xid, &dhcp.offer)) {
+            if (dhcp_offer(&temp_frame, dhcp.xid, &dhcp.offer)) {
                 state = STATE_DHCP_REQUEST;
             }
             return;
         }
-        case STATE_DHCP_REQUEST: return;
         case STATE_DHCP_ACK: {
-            if (dhcp_ack(&recevice_frame, dhcp.xid, &dhcp.offer)) {
+            if (dhcp_ack(&temp_frame, dhcp.xid, &dhcp.offer)) {
                 state = STATE_DHCP_FINISH;
             }
             return;
         }
-        case STATE_DHCP_FINISH: return;
+        case STATE_INIT:
+        case STATE_DHCP_DISCOVER:
+        case STATE_DHCP_REQUEST:
+        case STATE_DHCP_FINISH:
         case STATE_DHCP_FAILED: return;
         default: break;
     }
@@ -151,42 +101,109 @@ static void handle_ethernet(void) {
         return;
     }
 
-    if (recevice_frame.size < sizeof(struct ethernet_frame)) {
-        return;
-    }
+    struct drv_udpsrv_ip ip = dynip_get();
 
-    struct ethernet_frame *ethernet =
-        (struct ethernet_frame *) recevice_frame.payload;
-    if (!mac_eq(ethernet->dest_mac, eth_mac())
-        && !mac_eq(ethernet->dest_mac, BROADCAST_MAC)) {
+    if (arp_external_request(&temp_frame, ip)) {
+        send_packet(&temp_frame);
         return;
-    }
-
-    switch ((ethertype_t) ethernet->ethertype) {
-        case ETHERTYPE_IPV4: {
-            handle_ipv4();
-            break;
-        }
-        case ETHERTYPE_ARP: {
-            handle_arp();
-            break;
-        }
-        default: return;
     }
 }
 
-// process
-
 static void receive(void) {
-    if (!eth_receive(&recevice_frame)) {
+    if (!eth_receive(&temp_frame)) {
         port_write(ORANGE_LED, 1);
-        handle_ethernet();
+        handle();
         port_write(ORANGE_LED, 0);
     }
 }
 
 static void show_status(void) {
     port_write(CONNECT_LED, dynip_has());
+    port_write(USER_LED, user.has);
+}
+
+static void process_state_ready(void) {
+    if (!dynip_has()) {
+        state = STATE_DHCP_DISCOVER;
+    }
+
+    if (user.has) {
+        user.src_ip = dynip_get();
+        state = STATE_USER_ARP_REQUEST;
+    }
+}
+
+static void process_state_user_arp_request(void) {
+    if (arp_table_get_ip(user.dest_ip, &user.dest_mac)) {
+        state = STATE_USER_SEND;
+        return;
+    }
+
+    arp_request(&temp_frame, user.src_ip, user.dest_ip);
+    send_packet(&temp_frame);
+
+    user.timestamp = clock_millis();
+    state = STATE_USER_ARP_ANSWER;
+}
+
+static void process_state_user_arp_answer(void) {
+    if (clock_millis() - user.timestamp > USER_TIMEOUT_MS) {
+        state = STATE_USER_FAILED;
+    }
+}
+
+static void process_state_user_send(void) {
+    frame_setup_ethernet(&user_frame, user.dest_mac, ETHERTYPE_IPV4);
+
+    frame_setup_ipv4(&user_frame, IPV4_PROTOCOL_UDP, user.src_ip, user.dest_ip);
+
+    frame_setup_udp(&user_frame, user.src_port, user.dest_port, user.size);
+
+    user_frame.size = sizeof(struct udp_frame) + user.size;
+
+    send_packet(&user_frame);
+
+    state = STATE_READY;
+    user.has = false;
+}
+
+static void process_state_user_failed(void) {
+    state = STATE_READY;
+    user.has = false;
+}
+
+static void process_state_dhcp_discover(void) {
+    dhcp.xid = clock_millis();
+
+    dhcp_discover(&temp_frame, dhcp.xid, default_ip);
+    send_packet(&temp_frame);
+
+    dhcp.timestamp = clock_millis();
+    state = STATE_DHCP_OFFER;
+}
+
+static void process_state_dhcp_wait(void) {
+    if (clock_millis() - dhcp.timestamp > DHCP_TIMEOUT_MS) {
+        state = STATE_DHCP_FAILED;
+    }
+}
+
+static void process_state_dhcp_request(void) {
+    dhcp_request(&temp_frame, dhcp.xid, dhcp.offer);
+    send_packet(&temp_frame);
+
+    dhcp.timestamp = clock_millis();
+    state = STATE_DHCP_ACK;
+}
+
+static void process_state_dhcp_finish(void) {
+    dynip_set(dhcp.offer.ip, dhcp.offer.rent_time);
+    state = STATE_READY;
+}
+
+static void process_state_dhcp_failed(void) {
+    dynip_set(default_ip, STATIC_IP_RENT_MS);
+    state = STATE_READY;
 }
 
 static void process(void) {
@@ -198,52 +215,21 @@ static void process(void) {
     receive();
 
     switch (state) {
-        case STATE_INIT: break;
-        case STATE_READY: {
-            if (!dynip_has()) {
-                state = STATE_DHCP_DISCOVER;
-            }
-            break;
-        }
-        case STATE_DHCP_DISCOVER: {
-            dhcp.xid = clock_millis();
-
-            dhcp_discover(&send_frame, dhcp.xid, default_ip);
-            send_packet(&send_frame);
-            dhcp.timestamp = clock_millis();
-            state = STATE_DHCP_OFFER;
-            break;
-        }
-        case STATE_DHCP_OFFER: {
-            if (clock_millis() - dhcp.timestamp > DHCP_TIMEOUT_MS) {
-                state = STATE_DHCP_FAILED;
-            }
-            break;
-        }
-        case STATE_DHCP_REQUEST: {
-            dhcp_request(&send_frame, dhcp.xid, dhcp.offer);
-            send_packet(&send_frame);
-            dhcp.timestamp = clock_millis();
-            state = STATE_DHCP_ACK;
-            break;
-        }
-        case STATE_DHCP_ACK: {
-            if (clock_millis() - dhcp.timestamp > DHCP_TIMEOUT_MS) {
-                state = STATE_DHCP_FAILED;
-            }
-            break;
-        }
-        case STATE_DHCP_FINISH: {
-            dynip_set(dhcp.offer.ip, dhcp.offer.rent_time);
-            state = STATE_READY;
-            break;
-        }
-        case STATE_DHCP_FAILED: {
-            dynip_set(default_ip, STATIC_IP_RENT_MS);
-            state = STATE_READY;
-            break;
-        }
+        case STATE_INIT: return;
+        case STATE_READY: process_state_ready(); return;
+        case STATE_USER_ARP_REQUEST: process_state_user_arp_request(); return;
+        case STATE_USER_ARP_ANSWER: process_state_user_arp_answer(); return;
+        case STATE_USER_SEND: process_state_user_send(); return;
+        case STATE_USER_FAILED: process_state_user_failed(); return;
+        case STATE_DHCP_DISCOVER: process_state_dhcp_discover(); return;
+        case STATE_DHCP_OFFER: process_state_dhcp_wait(); return;
+        case STATE_DHCP_REQUEST: process_state_dhcp_request(); return;
+        case STATE_DHCP_ACK: process_state_dhcp_wait(); return;
+        case STATE_DHCP_FINISH: process_state_dhcp_finish(); return;
+        case STATE_DHCP_FAILED: process_state_dhcp_failed(); return;
     }
+
+    state = STATE_READY;
 }
 
 void __isr_timer1(void);
@@ -261,9 +247,10 @@ void drv_udpsrv_init(
     drv_udpsrv_handler_t handler
 ) {
     dynip_init();
-    arp_table_init();
+    arp_init();
 
     state = STATE_INIT;
+    user.has = false;
     udp_handler = handler;
     default_ip = ip;
 
@@ -293,6 +280,7 @@ void drv_udpsrv_init(
         port_setup(ORANGE_LED, cfg);
         port_setup(GREEN_LED, cfg);
         port_setup(CONNECT_LED, cfg);
+        port_setup(USER_LED, cfg);
     }
 
     eth_setup(mac);
@@ -304,20 +292,29 @@ void drv_udpsrv_init(
     state = STATE_READY;
 }
 
-int udpsrv_send(void) {
-    // if (state != STATE_READY) {
-    //     return 1;
-    // }
+int udpsrv_send(
+    struct drv_udpsrv_ip ip,
+    uint16_t src_port,
+    uint16_t dest_port,
+    const void *data,
+    size_t size
+) {
+    if (user.has) {
+        return -1;
+    }
 
-    // struct drv_udpsrv_ip dest_ip = { 192, 168, 1, 1 };
-    // frame_setup_ipv4(&user_frame, 0, IPV4_PROTOCOL_UDP, ip.value, dest_ip);
-    // frame_setup_udp(&user_frame, 25565, 25565, 0);
-    //
-    // user_frame.size = sizeof(struct udp_frame);
+    if (size > sizeof(user_frame.payload) - sizeof(struct udp_frame)) {
+        return -1;
+    }
 
-    // struct drv_udpsrv_ip ip = { 192, 168, 0, 97 };
-    // dhcp_discover(&user_frame, 0x1234, ip);
-    // send_packet(&user_frame);
+    memcpy(user_frame.payload + sizeof(struct udp_frame), data, size);
+
+    user.size = size;
+    user.dest_ip = ip;
+    user.src_port = src_port;
+    user.dest_port = dest_port;
+
+    user.has = true;
 
     return 0;
 }
