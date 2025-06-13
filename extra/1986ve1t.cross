@@ -1,0 +1,11 @@
+[constants]
+toolchain_prefix = 'arm-none-eabi'
+
+[binaries]
+c = toolchain_prefix + '-gcc'
+
+[host_machine]
+system = 'bare metal'
+cpu_family = 'arm'
+cpu = 'Cortex-M1'
+endian = 'little'
