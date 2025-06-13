@@ -76,7 +76,7 @@ static volatile uint8_t cmd_queue_tail = 0;
 static struct cmd_extended cmd_queue[CMD_QUEUE_SIZE];
 
 static void cmd_queue_push(struct cmd_extended cmd_extended) {
-    uint8_t next = (cmd_queue_head + 1) % CMD_QUEUE_SIZE;
+    uint8_t next = (uint8_t) ((cmd_queue_head + 1) % CMD_QUEUE_SIZE);
     if (next == cmd_queue_tail) {
         return;
     }
@@ -93,7 +93,7 @@ static bool cmd_queue_pop(struct cmd_extended *cmd_extended) {
     if (cmd_extended != NULL) {
         *cmd_extended = cmd_queue[cmd_queue_tail];
     }
-    cmd_queue_tail = (cmd_queue_tail + 1) % CMD_QUEUE_SIZE;
+    cmd_queue_tail = (uint8_t) ((cmd_queue_tail + 1) % CMD_QUEUE_SIZE);
 
     return true;
 }

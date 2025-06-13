@@ -4,7 +4,7 @@ project(
     default_options: {
         'c_std': 'c17',
         'warning_level': '2',
-        'werror': false,
+        'werror': true,
         'buildtype': 'debug',
         'debug': true,
         'optimization' : 'plain',

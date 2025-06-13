@@ -21,7 +21,7 @@ void drv_clock_init(void) {
     clk_en_peripheral(MOD_CLK_PERIPHERAL_TIMER2, true);
     struct mod_timer_cfg timer_cfg = timer_default_cfg();
     timer_cfg.enable = true;
-    timer_cfg.freq_div = (125 * (clk_get_cpu_freq() / BASE_FREQ_HZ)) - 1;
+    timer_cfg.freq_div = (uint16_t) ((clk_get_cpu_freq() / BASE_FREQ_HZ) * 125) - 1;
     timer_cfg.tim_div = 6;
     timer_cfg.trigger_value = UINT32_MAX;
     timer_setup(MOD_TIMER_2, timer_cfg);
