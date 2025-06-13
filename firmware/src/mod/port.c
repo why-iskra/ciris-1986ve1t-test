@@ -167,12 +167,7 @@ int port_write(mod_port_t port, int pin, bool value) {
         return -1;
     }
 
-    if (value) {
-        set_bit(port_regs->settx, pin, 1);
-    } else {
-        set_bit(port_regs->clrtx, pin, 1);
-    }
-
+    set_bit(port_regs->rxtx, pin, value ? 1 : 0);
     return 0;
 }
 
