@@ -163,7 +163,7 @@ static void handle_cmd(struct cmd_extended extended) {
                 dest_ip = extended.src_ip;
             }
 
-            udpsrv_send(dest_ip, 30000, 30000, &response, sizeof(response));
+            udpsrv_send(dest_ip, CMD_PORT, CMD_PORT, &response, sizeof(response));
             break;
         }
         case CMD_TYPE_ECHO_RESPONSE: break;
@@ -191,7 +191,7 @@ static void handle_cmd(struct cmd_extended extended) {
                 dest_ip = extended.src_ip;
             }
 
-            udpsrv_send(dest_ip, 30000, 30000, &response, sizeof(response));
+            udpsrv_send(dest_ip, CMD_PORT, CMD_PORT, &response, sizeof(response));
             break;
         }
         case CMD_TYPE_BTN_RESPONSE: break;
