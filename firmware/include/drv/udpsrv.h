@@ -4,9 +4,18 @@
 
 #pragma once
 
+#include "mod/eth.h"
 #include <stddef.h>
 #include <stdint.h>
-#include "mod/eth.h"
+
+#define FILL_MAC(x) ((struct mod_eth_mac) { (x), (x), (x), (x), (x), (x) })
+#define FILL_IP(x)  ((struct drv_udpsrv_ip) { (x), (x), (x), (x) })
+
+#define ZERO_MAC FILL_MAC(0)
+#define ZERO_IP  FILL_IP(0)
+
+#define BROADCAST_MAC FILL_MAC(0xff)
+#define BROADCAST_IP  FILL_IP(0xff)
 
 struct drv_udpsrv_ip {
     uint8_t octet1;
@@ -17,6 +26,5 @@ struct drv_udpsrv_ip {
 
 typedef void (*drv_udpsrv_handler_t)(const void *, size_t);
 
-void drv_udpsrv_init(struct mod_eth_mac, drv_udpsrv_handler_t);
-
-// int udpsrv_send(const void *, size_t);
+void drv_udpsrv_init(struct mod_eth_mac, struct drv_udpsrv_ip, drv_udpsrv_handler_t);
+int udpsrv_send(void);

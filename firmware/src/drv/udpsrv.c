@@ -3,160 +3,168 @@
 //
 
 #include "drv/udpsrv.h"
+#include "config.h"
+#include "drv/clock.h"
+#include "drv/udpsrv/arptable.h"
+#include "drv/udpsrv/dhcp.h"
+#include "drv/udpsrv/dynip.h"
+#include "drv/udpsrv/frames.h"
+#include "drv/udpsrv/utils.h"
 #include "mod/clk.h"
 #include "mod/nvic.h"
 #include "mod/port.h"
-#include <memory.h>
-#include <stdint.h>
+#include "mod/timer.h"
 
-#define ORANGE_LED MOD_PORT_B, 14
-#define GREEN_LED  MOD_PORT_B, 15
-
-#define BROADCAST_MAC ((struct mod_eth_mac) { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff })
-#define BROADCAST_IP  ((struct drv_udpsrv_ip) { 0xff, 0xff, 0xff, 0xff })
+#define ORANGE_LED  MOD_PORT_B, 14
+#define GREEN_LED   MOD_PORT_B, 15
+#define CONNECT_LED MOD_PORT_D, 8
 
 typedef enum {
-    ETHERTYPE_IPV4 = 0x0008,
-    ETHERTYPE_ARP = 0x0608,
-} ethertype_t;
+    STATE_INIT,
+    STATE_READY,
+    STATE_DHCP_DISCOVER,
+    STATE_DHCP_OFFER,
+    STATE_DHCP_REQUEST,
+    STATE_DHCP_ACK,
+    STATE_DHCP_FINISH,
+    STATE_DHCP_FAILED,
+} state_t;
 
-typedef enum {
-    ARP_OPCODE_REQUEST = 0x0100,
-    ARP_OPCODE_ANSWER = 0x0200,
-} arp_opcode_t;
+static drv_udpsrv_handler_t udp_handler;
+static struct drv_udpsrv_ip default_ip;
 
-typedef enum {
-    ARP_HARDWARE_TYPE_ETHERNET = 0x0100,
-} arp_hardware_type_t;
+static struct mod_eth_frame recevice_frame;
+static struct mod_eth_frame send_frame;
+static struct mod_eth_frame user_frame;
 
-typedef enum {
-    ARP_PROTOCOL_TYPE_IPV4 = 0x0008,
-} arp_protocol_type_t;
-
-struct ethernet_frame {
-    struct mod_eth_mac dest_mac;
-    struct mod_eth_mac src_mac;
-    uint16_t ethertype;
-} __attribute__((packed));
-
-struct arp_frame {
-    struct ethernet_frame ethernet;
-    uint16_t hardware_type;
-    uint16_t protocol_type;
-    uint8_t hardware_size;
-    uint8_t protocol_size;
-    uint16_t opcode;
-    struct mod_eth_mac sender_mac;
-    struct drv_udpsrv_ip sender_ip;
-    struct mod_eth_mac target_mac;
-    struct drv_udpsrv_ip target_ip;
-} __attribute__((packed));
-
-struct ipv4_frame {
-    struct ethernet_frame ethernet;
-    uint8_t version : 4;
-    uint8_t ihl     : 4;
-    uint8_t dscp    : 6;
-    uint8_t ecn     : 2;
-    uint16_t length;
-    uint16_t id;
-    uint8_t flags            : 3;
-    uint16_t fragment_offset : 13;
-    uint8_t ttl;
-    uint8_t protocol;
-    uint16_t header_checksum;
-    struct drv_udpsrv_ip src_ip;
-    struct drv_udpsrv_ip dest_ip;
-} __attribute__((packed));
-
-static drv_udpsrv_handler_t udp_handler = NULL;
-
-static struct mod_eth_frame frame;
+static state_t state;
 
 static struct {
-    struct {
-        bool has;
-        struct drv_udpsrv_ip value;
-    } ip;
-} state = {
-    .ip.has = false,
-    .ip.value = { 0, 0, 0, 0 }
-};
+    uint32_t xid;
+    uint32_t timestamp;
+    struct dhcp_offer offer;
+} dhcp;
 
-static void send_arp(
-    arp_opcode_t,
-    struct mod_eth_mac,
-    struct mod_eth_mac,
-    struct drv_udpsrv_ip,
-    struct mod_eth_mac,
-    struct drv_udpsrv_ip
-);
+// send
 
-static inline bool mac_eq(struct mod_eth_mac a, struct mod_eth_mac b) {
-    return memcmp(&a, &b, sizeof(struct mod_eth_mac)) == 0;
+static void send_packet(struct mod_eth_frame *frame) {
+    port_write(GREEN_LED, 1);
+    eth_send(frame);
+    port_write(GREEN_LED, 0);
 }
 
-static inline bool ip_eq(struct drv_udpsrv_ip a, struct drv_udpsrv_ip b) {
-    return memcmp(&a, &b, sizeof(struct drv_udpsrv_ip)) == 0;
-}
+// handlers
 
-static void handle_arp(void) {
-    if (frame.received < sizeof(struct arp_frame)) {
+static void handle_arp_request(void) {
+    struct arp_frame *arp_frame = (struct arp_frame *) recevice_frame.payload;
+
+    struct drv_udpsrv_ip ip = dynip_get();
+    if (!ip_eq(ip, arp_frame->target_ip)) {
         return;
     }
 
-    struct arp_frame *arp_frame = (struct arp_frame *) frame.payload;
+    frame_setup_ethernet(&send_frame, arp_frame->sender_mac, ETHERTYPE_ARP);
 
-    // is ethernet and ipv4?
+    frame_setup_arp(
+        &send_frame,
+        ARP_OPCODE_ANSWER,
+        eth_mac(),
+        ip,
+        arp_frame->sender_mac,
+        arp_frame->sender_ip
+    );
+
+    send_frame.size = sizeof(struct arp_frame);
+
+    send_packet(&send_frame);
+}
+
+static void handle_arp_answer(void) {
+    struct arp_frame *arp_frame = (struct arp_frame *) recevice_frame.payload;
+    if (!mac_eq(eth_mac(), arp_frame->target_mac)) {
+        return;
+    }
+
+    if (!ip_eq(dynip_get(), arp_frame->target_ip)) {
+        return;
+    }
+
+    arp_table_set_ip(arp_frame->sender_ip, arp_frame->sender_mac);
+}
+
+static void handle_arp(void) {
+    if (recevice_frame.size < sizeof(struct arp_frame)) {
+        return;
+    }
+
+    struct arp_frame *arp_frame = (struct arp_frame *) recevice_frame.payload;
+
     if (arp_frame->hardware_type != ARP_HARDWARE_TYPE_ETHERNET
         || arp_frame->protocol_type != ARP_PROTOCOL_TYPE_IPV4) {
         return;
     }
 
-    // validate mac and ip length
     if (arp_frame->hardware_size != sizeof(struct mod_eth_mac)
         || arp_frame->protocol_size != sizeof(struct drv_udpsrv_ip)) {
         return;
     }
 
-    if (arp_frame->opcode != ARP_OPCODE_REQUEST) {
-        return;
-    }
-
-    if (!state.ip.has) {
-        return;
-    }
-
-    if (ip_eq(state.ip.value, arp_frame->target_ip)) {
-        send_arp(
-            ARP_OPCODE_ANSWER,
-            arp_frame->target_mac,
-            eth_mac(),
-            state.ip.value,
-            arp_frame->sender_mac,
-            arp_frame->sender_ip
-        );
+    if (arp_frame->opcode == ARP_OPCODE_REQUEST) {
+        handle_arp_request();
+    } else if (arp_frame->opcode == ARP_OPCODE_ANSWER) {
+        handle_arp_answer();
     }
 }
 
-static bool ethernet_check_mac(void) {
-    struct ethernet_frame *ethernet = (struct ethernet_frame *) frame.payload;
-    return mac_eq(ethernet->dest_mac, eth_mac())
-           || mac_eq(ethernet->dest_mac, BROADCAST_MAC);
+static void handle_ipv4(void) {
+    if (recevice_frame.size < sizeof(struct ipv4_frame)) {
+        return;
+    }
+
+    struct ipv4_frame *ipv4_frame =
+        (struct ipv4_frame *) recevice_frame.payload;
 }
 
 static void handle_ethernet(void) {
-    if (frame.received < sizeof(struct ethernet_frame)) {
+    switch (state) {
+        case STATE_INIT: return;
+        case STATE_DHCP_DISCOVER: return;
+        case STATE_DHCP_OFFER: {
+            if (dhcp_offer(&recevice_frame, dhcp.xid, &dhcp.offer)) {
+                state = STATE_DHCP_REQUEST;
+            }
+            return;
+        }
+        case STATE_DHCP_REQUEST: return;
+        case STATE_DHCP_ACK: {
+            if (dhcp_ack(&recevice_frame, dhcp.xid, &dhcp.offer)) {
+                state = STATE_DHCP_FINISH;
+            }
+            return;
+        }
+        case STATE_DHCP_FINISH: return;
+        case STATE_DHCP_FAILED: return;
+        default: break;
+    }
+
+    if (!dynip_has()) {
         return;
     }
 
-    if (!ethernet_check_mac()) {
+    if (recevice_frame.size < sizeof(struct ethernet_frame)) {
         return;
     }
 
-    struct ethernet_frame *ethernet = (struct ethernet_frame *) frame.payload;
+    struct ethernet_frame *ethernet =
+        (struct ethernet_frame *) recevice_frame.payload;
+    if (!mac_eq(ethernet->dest_mac, eth_mac())
+        && !mac_eq(ethernet->dest_mac, BROADCAST_MAC)) {
+        return;
+    }
+
     switch ((ethertype_t) ethernet->ethertype) {
         case ETHERTYPE_IPV4: {
+            handle_ipv4();
             break;
         }
         case ETHERTYPE_ARP: {
@@ -167,65 +175,149 @@ static void handle_ethernet(void) {
     }
 }
 
-static void handle_frame(void) {
-    port_write(ORANGE_LED, 1);
+// process
 
-    if (eth_receive(&frame)) {
+static void receive(void) {
+    if (!eth_receive(&recevice_frame)) {
+        port_write(ORANGE_LED, 1);
+        handle_ethernet();
         port_write(ORANGE_LED, 0);
-        return;
+    }
+}
+
+static void show_status(void) {
+    port_write(CONNECT_LED, dynip_has());
+}
+
+static void process(void) {
+    arp_table_validate();
+    dynip_validate();
+
+    show_status();
+
+    receive();
+
+    switch (state) {
+        case STATE_INIT: break;
+        case STATE_READY: {
+            if (!dynip_has()) {
+                state = STATE_DHCP_DISCOVER;
+            }
+            break;
+        }
+        case STATE_DHCP_DISCOVER: {
+            dhcp.xid = clock_millis();
+
+            dhcp_discover(&send_frame, dhcp.xid, default_ip);
+            send_packet(&send_frame);
+            dhcp.timestamp = clock_millis();
+            state = STATE_DHCP_OFFER;
+            break;
+        }
+        case STATE_DHCP_OFFER: {
+            if (clock_millis() - dhcp.timestamp > DHCP_TIMEOUT_MS) {
+                state = STATE_DHCP_FAILED;
+            }
+            break;
+        }
+        case STATE_DHCP_REQUEST: {
+            dhcp_request(&send_frame, dhcp.xid, dhcp.offer);
+            send_packet(&send_frame);
+            dhcp.timestamp = clock_millis();
+            state = STATE_DHCP_ACK;
+            break;
+        }
+        case STATE_DHCP_ACK: {
+            if (clock_millis() - dhcp.timestamp > DHCP_TIMEOUT_MS) {
+                state = STATE_DHCP_FAILED;
+            }
+            break;
+        }
+        case STATE_DHCP_FINISH: {
+            dynip_set(dhcp.offer.ip, dhcp.offer.rent_time);
+            state = STATE_READY;
+            break;
+        }
+        case STATE_DHCP_FAILED: {
+            dynip_set(default_ip, STATIC_IP_RENT_MS);
+            state = STATE_READY;
+            break;
+        }
+    }
+}
+
+void __isr_timer1(void);
+void __isr_timer1(void) {
+    if (timer_trigger(MOD_TIMER_1, true)) {
+        process();
+    }
+}
+
+// api
+
+void drv_udpsrv_init(
+    struct mod_eth_mac mac,
+    struct drv_udpsrv_ip ip,
+    drv_udpsrv_handler_t handler
+) {
+    dynip_init();
+    arp_table_init();
+
+    state = STATE_INIT;
+    udp_handler = handler;
+    default_ip = ip;
+
+    {
+        clk_en_peripheral(MOD_CLK_PERIPHERAL_TIMER1, true);
+
+        struct mod_timer_cfg timer_cfg = timer_default_cfg();
+        timer_cfg.enable = true;
+        timer_cfg.trigger_value = 8000;
+        timer_cfg.interrupt.trigger = true;
+
+        nvic_irq_en(MOD_NVIC_IRQ_TIMER1, false);
+        timer_setup(MOD_TIMER_1, timer_cfg);
+        timer_control(MOD_TIMER_1, true);
     }
 
-    handle_ethernet();
-    port_write(ORANGE_LED, 0);
-}
+    {
+        clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTB, true);
+        clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTD, true);
 
-void drv_udpsrv_init(struct mod_eth_mac mac, drv_udpsrv_handler_t handler) {
-    struct mod_port_cfg cfg = port_default_cfg();
-    cfg.func = MOD_PORT_FUNC_PORT;
-    cfg.mode = MOD_PORT_MODE_DIGITAL;
-    cfg.dir = MOD_PORT_DIR_OUT;
-    cfg.speed = MOD_PORT_SPEED_FAST;
+        struct mod_port_cfg cfg = port_default_cfg();
+        cfg.func = MOD_PORT_FUNC_PORT;
+        cfg.mode = MOD_PORT_MODE_DIGITAL;
+        cfg.dir = MOD_PORT_DIR_OUT;
+        cfg.speed = MOD_PORT_SPEED_FAST;
 
-    clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTB, true);
-    port_setup(ORANGE_LED, cfg);
-    port_setup(GREEN_LED, cfg);
+        port_setup(ORANGE_LED, cfg);
+        port_setup(GREEN_LED, cfg);
+        port_setup(CONNECT_LED, cfg);
+    }
 
     eth_setup(mac);
-    eth_set_handler(&handle_frame);
-
-    udp_handler = handler;
-
     nvic_irq_en(MOD_NVIC_IRQ_ETHERNET, true);
+    nvic_irq_en(MOD_NVIC_IRQ_TIMER1, true);
+
+    clock_delay_ms(3000);
+
+    state = STATE_READY;
 }
 
-static void send_packet(const void *data, size_t size) {
-    port_write(GREEN_LED, 1);
-    eth_send(data, size);
-    port_write(GREEN_LED, 0);
-}
+int udpsrv_send(void) {
+    // if (state != STATE_READY) {
+    //     return 1;
+    // }
 
-static void send_arp(
-    arp_opcode_t opcode,
-    struct mod_eth_mac ethernet_mac,
-    struct mod_eth_mac source_mac,
-    struct drv_udpsrv_ip source_ip,
-    struct mod_eth_mac target_mac,
-    struct drv_udpsrv_ip target_ip
-) {
-    struct arp_frame data = {
-        .ethernet.dest_mac = ethernet_mac,
-        .ethernet.src_mac = eth_mac(),
-        .ethernet.ethertype = ETHERTYPE_ARP,
-        .hardware_type = ARP_HARDWARE_TYPE_ETHERNET,
-        .protocol_type = ARP_PROTOCOL_TYPE_IPV4,
-        .hardware_size = sizeof(struct mod_eth_mac),
-        .protocol_size = sizeof(struct drv_udpsrv_ip),
-        .opcode = (uint16_t) opcode,
-        .sender_mac = source_mac,
-        .sender_ip = source_ip,
-        .target_mac = target_mac,
-        .target_ip = target_ip,
-    };
+    // struct drv_udpsrv_ip dest_ip = { 192, 168, 1, 1 };
+    // frame_setup_ipv4(&user_frame, 0, IPV4_PROTOCOL_UDP, ip.value, dest_ip);
+    // frame_setup_udp(&user_frame, 25565, 25565, 0);
+    //
+    // user_frame.size = sizeof(struct udp_frame);
 
-    send_packet(&data, sizeof(data));
+    // struct drv_udpsrv_ip ip = { 192, 168, 0, 97 };
+    // dhcp_discover(&user_frame, 0x1234, ip);
+    // send_packet(&user_frame);
+
+    return 0;
 }
