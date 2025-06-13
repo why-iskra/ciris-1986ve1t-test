@@ -22,6 +22,7 @@ static int pos_x = 0;
 static int pos_y = 0;
 
 static char text_buffer[TEXT_BUFFER_HEIGHT][TEXT_BUFFER_WIDTH];
+static char text_buffer_prev[TEXT_BUFFER_HEIGHT][TEXT_BUFFER_WIDTH];
 
 int _write(int, const void *, size_t);
 int _write(int fd, const void *buf, size_t count) {
@@ -58,6 +59,7 @@ void drv_terminal_init(void) {
 
 void terminal_clear(void) {
     memset(text_buffer, 0, TEXT_BUFFER_WIDTH * TEXT_BUFFER_HEIGHT);
+    memset(text_buffer_prev, 0, TEXT_BUFFER_WIDTH * TEXT_BUFFER_HEIGHT);
     pos_x = 0;
     pos_y = 0;
 
@@ -82,8 +84,8 @@ int terminal_set_cursor_y(int value) {
     return 0;
 }
 
-static void set_char(int x, int y, char c) {
-    port_write(MOD_PORT_D, INDICATE_PIN, 1);
+static void draw_char(int x, int y, char c) {
+    port_write(MOD_PORT_D, INDICATE_PIN, true);
 
     uint8_t *font_slice = font_6x8 + (8 * (int) c);
 
@@ -102,17 +104,7 @@ static void set_char(int x, int y, char c) {
         );
     }
 
-    text_buffer[y][x] = c;
-
-    port_write(MOD_PORT_D, INDICATE_PIN, 0);
-}
-
-static void redraw(void) {
-    for (int y = 0; y < TEXT_BUFFER_HEIGHT; y++) {
-        for (int x = 0; x < TEXT_BUFFER_WIDTH; x++) {
-            set_char(x, y, text_buffer[y][x]);
-        }
-    }
+    port_write(MOD_PORT_D, INDICATE_PIN, false);
 }
 
 static void move_up_lines(void) {
@@ -129,7 +121,6 @@ static void newline(void) {
     }
 
     move_up_lines();
-    redraw();
 }
 
 static void move_right(void) {
@@ -150,12 +141,12 @@ static void del(void) {
         pos_y--;
     }
 
-    set_char(pos_x, pos_y, ' ');
+    text_buffer[pos_y][pos_x] = ' ';
 }
 
 void terminal_printc(char c) {
     if (isprint((int) c)) {
-        set_char(pos_x, pos_y, c);
+        text_buffer[pos_y][pos_x] = c;
         move_right();
     } else {
         switch (c) {
@@ -173,8 +164,20 @@ void terminal_printc(char c) {
                 break;
             }
             default: {
-                set_char(pos_x, pos_y, ' ');
+                text_buffer[pos_y][pos_x] = ' ';
                 move_right();
+            }
+        }
+    }
+}
+
+void terminal_update(bool lazy) {
+    for (int y = 0; y < TEXT_BUFFER_HEIGHT; y++) {
+        for (int x = 0; x < TEXT_BUFFER_WIDTH; x++) {
+            char c = text_buffer[y][x];
+            if (!lazy || c != text_buffer_prev[y][x]) {
+                draw_char(x, y, c);
+                text_buffer_prev[y][x] = c;
             }
         }
     }
