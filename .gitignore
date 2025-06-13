@@ -4,4 +4,4 @@ build*
 
 compile_commands.json
 .clangd
-flake.nix
+flake.lock
