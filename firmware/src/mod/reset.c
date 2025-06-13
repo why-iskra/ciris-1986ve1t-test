@@ -6,5 +6,5 @@
 #include "mod/regs.h"
 
 void software_reset(void) {
-    *get_aircr_reg() |= 0xFA050000;
+    *get_aircr_reg() = 0x05FA0004;
 }

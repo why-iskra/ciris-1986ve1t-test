@@ -28,8 +28,8 @@ static uintptr_t heap_brk = (uintptr_t) get_point(uint64_t, heap_start);
 extern int main(void);
 void __start(void);
 
-void __isr_default(void);
-void __isr_default(void) {
+void __isr_undefined(void);
+void __isr_undefined(void) {
     software_reset();
     while (true) { }
 }

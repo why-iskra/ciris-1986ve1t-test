@@ -100,10 +100,10 @@ __isr_reset:
     .thumb
     .align	1
     .thumb_func
-    .weak	__isr_default
+    .globl	__isr_default
     .type	__isr_default, %function
 __isr_default:
-    bx lr
+    bl __isr_undefined
     .size	__isr_default, . - __isr_default
 
 /* define others handlers */
