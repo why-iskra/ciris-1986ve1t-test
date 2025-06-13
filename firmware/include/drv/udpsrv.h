@@ -24,7 +24,21 @@ struct drv_udpsrv_ip {
     uint8_t octet4;
 } __attribute__((packed));
 
-typedef void (*drv_udpsrv_handler_t)(const void *, size_t);
+struct udp_info {
+    struct drv_udpsrv_ip src_ip;
+    struct drv_udpsrv_ip dest_ip;
+    struct drv_udpsrv_ip mask;
+    uint16_t src_port;
+    uint16_t dest_port;
+};
 
-void drv_udpsrv_init(struct mod_eth_mac, struct drv_udpsrv_ip, drv_udpsrv_handler_t);
+typedef void (*drv_udpsrv_handler_t)(const void *, size_t, struct udp_info);
+
+void drv_udpsrv_init(
+    struct mod_eth_mac,
+    struct drv_udpsrv_ip,
+    struct drv_udpsrv_ip,
+    drv_udpsrv_handler_t
+);
+
 int udpsrv_send(struct drv_udpsrv_ip, uint16_t, uint16_t, const void *, size_t);

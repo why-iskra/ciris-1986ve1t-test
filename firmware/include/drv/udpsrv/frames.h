@@ -135,6 +135,8 @@ void frame_setup_udp(struct mod_eth_frame *, uint16_t, uint16_t, size_t);
 
 bool frame_valid_udp(struct mod_eth_frame *, bool, uint16_t, bool, uint16_t);
 
+void frame_normalize_udp(struct mod_eth_frame *);
+
 void frame_setup_bootp(
     struct mod_eth_frame *,
     bootp_op_t,

@@ -9,6 +9,7 @@
 #include "drv/udpsrv/dhcp.h"
 #include "drv/udpsrv/dynip.h"
 #include "drv/udpsrv/frames.h"
+#include "drv/udpsrv/utils.h"
 #include "mod/clk.h"
 #include "mod/nvic.h"
 #include "mod/port.h"
@@ -37,6 +38,7 @@ typedef enum {
 
 static drv_udpsrv_handler_t udp_handler;
 static struct drv_udpsrv_ip default_ip;
+static struct drv_udpsrv_ip default_mask;
 
 static struct mod_eth_frame temp_frame;
 static struct mod_eth_frame user_frame;
@@ -68,6 +70,58 @@ static void send_packet(struct mod_eth_frame *frame) {
 }
 
 // process
+
+static void external_handle(void) {
+    if (temp_frame.size < sizeof(struct udp_frame)) {
+        return;
+    }
+
+    struct ethernet_frame *ethernet_frame =
+        (struct ethernet_frame *) temp_frame.payload;
+    struct ipv4_frame *ipv4_frame = (struct ipv4_frame *) temp_frame.payload;
+    struct udp_frame *udp_frame = (struct udp_frame *) temp_frame.payload;
+
+    if (!mac_eq(ethernet_frame->dest_mac, eth_mac())
+        || ethernet_frame->ethertype != ETHERTYPE_IPV4) {
+        return;
+    }
+
+    if (!frame_valid_ipv4(&temp_frame, IPV4_PROTOCOL_UDP)) {
+        return;
+    }
+
+    struct drv_udpsrv_ip mask = dynip_mask();
+
+    struct drv_udpsrv_ip ip = dynip_get();
+    struct drv_udpsrv_ip masked_ip = ip_mask(ip, mask);
+
+    struct drv_udpsrv_ip dest_ip = ipv4_frame->dest_ip;
+    struct drv_udpsrv_ip masked_dest_ip = ip_mask(dest_ip, mask);
+
+    if (!ip_eq(dest_ip, ip) || !ip_eq(masked_dest_ip, masked_ip)) {
+        return;
+    }
+
+    if (!frame_valid_udp(&temp_frame, false, 0, false, 0)) {
+        return;
+    }
+
+    frame_normalize_udp(&temp_frame);
+
+    struct udp_info info = {
+        .src_ip = ipv4_frame->src_ip,
+        .dest_ip = ipv4_frame->dest_ip,
+        .mask = mask,
+        .src_port = udp_frame->src_port,
+        .dest_port = udp_frame->dest_port,
+    };
+
+    udp_handler(
+        temp_frame.payload + sizeof(struct udp_frame),
+        udp_frame->length - UDP_FRAME_SIZE,
+        info
+    );
+}
 
 static void handle(void) {
     switch (state) {
@@ -101,11 +155,13 @@ static void handle(void) {
         return;
     }
 
-    struct drv_udpsrv_ip ip = dynip_get();
-
-    if (arp_external_request(&temp_frame, ip)) {
+    if (arp_external_request(&temp_frame, dynip_get())) {
         send_packet(&temp_frame);
         return;
+    }
+
+    if (udp_handler != NULL) {
+        external_handle();
     }
 }
 
@@ -197,12 +253,12 @@ static void process_state_dhcp_request(void) {
 }
 
 static void process_state_dhcp_finish(void) {
-    dynip_set(dhcp.offer.ip, dhcp.offer.rent_time);
+    dynip_set(dhcp.offer.ip, dhcp.offer.mask, dhcp.offer.rent_time);
     state = STATE_READY;
 }
 
 static void process_state_dhcp_failed(void) {
-    dynip_set(default_ip, STATIC_IP_RENT_MS);
+    dynip_set(default_ip, default_mask, STATIC_IP_RENT_MS);
     state = STATE_READY;
 }
 
@@ -244,6 +300,7 @@ void __isr_timer1(void) {
 void drv_udpsrv_init(
     struct mod_eth_mac mac,
     struct drv_udpsrv_ip ip,
+    struct drv_udpsrv_ip mask,
     drv_udpsrv_handler_t handler
 ) {
     dynip_init();
@@ -253,13 +310,14 @@ void drv_udpsrv_init(
     user.has = false;
     udp_handler = handler;
     default_ip = ip;
+    default_mask = mask;
 
     {
         clk_en_peripheral(MOD_CLK_PERIPHERAL_TIMER1, true);
 
         struct mod_timer_cfg timer_cfg = timer_default_cfg();
         timer_cfg.enable = true;
-        timer_cfg.trigger_value = 8000;
+        timer_cfg.trigger_value = 4000;
         timer_cfg.interrupt.trigger = true;
 
         nvic_irq_en(MOD_NVIC_IRQ_TIMER1, false);

@@ -262,6 +262,14 @@ bool frame_valid_udp(
     return expected_checksum == got_checksum;
 }
 
+void frame_normalize_udp(struct mod_eth_frame *frame) {
+    struct udp_frame *result = (struct udp_frame *) frame->payload;
+
+    reverse_bytes(&result->length, sizeof(result->length));
+    reverse_bytes(&result->src_port, sizeof(result->src_port));
+    reverse_bytes(&result->dest_port, sizeof(result->dest_port));
+}
+
 void frame_setup_bootp(
     struct mod_eth_frame *frame,
     bootp_op_t op,
