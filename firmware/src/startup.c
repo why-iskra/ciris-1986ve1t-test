@@ -11,6 +11,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define INDICATE_PIN MOD_PORT_D, 7
+
 #define get_point(t, n) ((t *) &__##n##__)
 
 extern uint32_t __text_end__;
@@ -105,20 +107,20 @@ static void indicate_startup(void) {
     cfg.speed = MOD_PORT_SPEED_FAST;
 
     clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTD, true);
-    port_setup(MOD_PORT_D, 7, cfg);
+    port_setup(INDICATE_PIN, cfg);
 
     for (int i = 0; i < 2; i++) {
-        port_write(MOD_PORT_D, 7, 1);
+        port_write(INDICATE_PIN, 1);
         nop_delay(50000);
-        port_write(MOD_PORT_D, 7, 0);
+        port_write(INDICATE_PIN, 0);
         nop_delay(50000);
     }
 
-    port_write(MOD_PORT_D, 7, 1);
+    port_write(INDICATE_PIN, 1);
     nop_delay(200000);
-    port_write(MOD_PORT_D, 7, 0);
+    port_write(INDICATE_PIN, 0);
 
-    port_setup(MOD_PORT_D, 7, port_default_cfg());
+    port_setup(INDICATE_PIN, port_default_cfg());
     clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTD, false);
 }
 

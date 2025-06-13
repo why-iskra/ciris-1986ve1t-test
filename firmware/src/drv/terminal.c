@@ -12,7 +12,7 @@
 #include <limits.h>
 #include <string.h>
 
-#define INDICATE_PIN (7)
+#define INDICATE_PIN MOD_PORT_D, 7
 
 #define TEXT_BUFFER_WIDTH  (21)
 #define TEXT_BUFFER_HEIGHT (8)
@@ -51,8 +51,8 @@ void drv_terminal_init(void) {
     cfg.speed = MOD_PORT_SPEED_FAST;
 
     clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTD, true);
-    port_setup(MOD_PORT_D, INDICATE_PIN, cfg);
-    port_write(MOD_PORT_D, INDICATE_PIN, false);
+    port_setup(INDICATE_PIN, cfg);
+    port_write(INDICATE_PIN, false);
 
     terminal_clear();
 
@@ -87,7 +87,7 @@ int terminal_set_cursor_y(int value) {
 }
 
 static void draw_char(int x, int y, char c) {
-    port_write(MOD_PORT_D, INDICATE_PIN, true);
+    port_write(INDICATE_PIN, true);
 
     uint8_t *font_slice = font_6x8 + (8 * (int) c);
 
@@ -106,7 +106,7 @@ static void draw_char(int x, int y, char c) {
         );
     }
 
-    port_write(MOD_PORT_D, INDICATE_PIN, false);
+    port_write(INDICATE_PIN, false);
 }
 
 static void move_up_lines(void) {
