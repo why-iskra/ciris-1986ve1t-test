@@ -324,7 +324,7 @@ void drv_udpsrv_init(
 
         struct mod_timer_cfg timer_cfg = timer_default_cfg();
         timer_cfg.enable = true;
-        timer_cfg.trigger_value = 8000;
+        timer_cfg.trigger_value = 4000;
         timer_cfg.interrupt.trigger = true;
 
         nvic_irq_en(MOD_NVIC_IRQ_TIMER1, false);
@@ -346,6 +346,11 @@ void drv_udpsrv_init(
         port_setup(GREEN_LED, cfg);
         port_setup(CONNECT_LED, cfg);
         port_setup(USER_LED, cfg);
+
+        port_write(ORANGE_LED, false);
+        port_write(GREEN_LED, false);
+        port_write(CONNECT_LED, false);
+        port_write(USER_LED, false);
     }
 
     eth_setup(mac);

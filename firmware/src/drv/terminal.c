@@ -46,11 +46,13 @@ int _write(int fd, const void *buf, size_t count) {
 void drv_terminal_init(void) {
     struct mod_port_cfg cfg = port_default_cfg();
     cfg.dir = MOD_PORT_DIR_OUT;
+    cfg.func = MOD_PORT_FUNC_PORT;
     cfg.mode = MOD_PORT_MODE_DIGITAL;
     cfg.speed = MOD_PORT_SPEED_FAST;
 
     clk_en_peripheral(MOD_CLK_PERIPHERAL_PORTD, true);
     port_setup(MOD_PORT_D, INDICATE_PIN, cfg);
+    port_write(MOD_PORT_D, INDICATE_PIN, false);
 
     terminal_clear();
 
