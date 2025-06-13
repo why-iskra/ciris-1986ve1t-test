@@ -5,7 +5,7 @@
 
     .section .stack
     .align	3
-    .equ	stack_size, 0x1000
+    .equ	stack_size, 0x2000
     .globl	__stack_top__
     .globl	__stack_limit__
 __stack_limit__:
