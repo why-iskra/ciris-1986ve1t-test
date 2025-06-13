@@ -19,6 +19,7 @@ typedef enum {
     DHCP_OPTION_REQUEST_IP = 50,
     DHCP_OPTION_RENT_TIME = 51,
     DHCP_OPTION_SERVER = 54,
+    DHCP_OPTION_MASK = 1,
 } dhcp_option_t;
 
 typedef enum {
@@ -41,6 +42,7 @@ static uint8_t dhcp_option_length(dhcp_option_t option) {
         case DHCP_OPTION_REQUEST_IP: length = 4; break;
         case DHCP_OPTION_RENT_TIME: length = 4; break;
         case DHCP_OPTION_SERVER: length = 4; break;
+        case DHCP_OPTION_MASK: length = 4; break;
     }
 
     return length;
@@ -264,8 +266,10 @@ bool dhcp_offer(
     uint8_t *message_p = dhcp_get_option(frame, DHCP_OPTION_MESSAGE);
     uint32_t *rent_time_p = dhcp_get_option(frame, DHCP_OPTION_RENT_TIME);
     struct drv_udpsrv_ip *server_p = dhcp_get_option(frame, DHCP_OPTION_SERVER);
+    struct drv_udpsrv_ip *mask_p = dhcp_get_option(frame, DHCP_OPTION_MASK);
 
-    if (message_p == NULL || rent_time_p == NULL || server_p == NULL) {
+    if (message_p == NULL || rent_time_p == NULL || server_p == NULL
+        || mask_p == NULL) {
         return false;
     }
 
@@ -279,6 +283,7 @@ bool dhcp_offer(
     if (result != NULL) {
         memcpy(&result->rent_time, rent_time_p, sizeof(*rent_time_p));
         memcpy(&result->server, server_p, sizeof(*server_p));
+        memcpy(&result->mask, mask_p, sizeof(*mask_p));
         result->ip = bootp_frame->yiaddr;
     }
 
@@ -361,8 +366,10 @@ bool dhcp_ack(
     uint8_t *message_p = dhcp_get_option(frame, DHCP_OPTION_MESSAGE);
     uint32_t *rent_time_p = dhcp_get_option(frame, DHCP_OPTION_RENT_TIME);
     struct drv_udpsrv_ip *server_p = dhcp_get_option(frame, DHCP_OPTION_SERVER);
+    struct drv_udpsrv_ip *mask_p = dhcp_get_option(frame, DHCP_OPTION_MASK);
 
-    if (message_p == NULL || rent_time_p == NULL || server_p == NULL) {
+    if (message_p == NULL || rent_time_p == NULL || server_p == NULL
+        || mask_p == NULL) {
         return false;
     }
 
@@ -376,6 +383,7 @@ bool dhcp_ack(
     if (result != NULL) {
         memcpy(&result->rent_time, rent_time_p, sizeof(*rent_time_p));
         memcpy(&result->server, server_p, sizeof(*server_p));
+        memcpy(&result->mask, mask_p, sizeof(*mask_p));
         result->ip = bootp_frame->yiaddr;
     }
 

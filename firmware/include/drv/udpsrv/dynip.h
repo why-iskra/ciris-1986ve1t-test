@@ -10,5 +10,6 @@
 void dynip_init(void);
 bool dynip_has(void);
 struct drv_udpsrv_ip dynip_get(void);
-void dynip_set(struct drv_udpsrv_ip, uint32_t);
+struct drv_udpsrv_ip dynip_mask(void);
+void dynip_set(struct drv_udpsrv_ip, struct drv_udpsrv_ip, uint32_t);
 void dynip_validate(void);

@@ -11,6 +11,7 @@ struct dhcp_offer {
     uint32_t rent_time;
     struct drv_udpsrv_ip server;
     struct drv_udpsrv_ip ip;
+    struct drv_udpsrv_ip mask;
 };
 
 void dhcp_discover(struct mod_eth_frame *, uint32_t, struct drv_udpsrv_ip);
