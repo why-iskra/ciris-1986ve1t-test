@@ -8,4 +8,7 @@
 
 #define DHCP_TIMEOUT_MS   (20000)
 #define USER_TIMEOUT_MS   (15000)
+
 #define STATIC_IP_RENT_MS (120000)
+
+#define DHCP_RETRY_ATTEMPTS (3)

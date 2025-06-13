@@ -58,6 +58,7 @@ static struct {
 } user;
 
 static struct {
+    int attempts;
     uint32_t xid;
     uint32_t timestamp;
     struct dhcp_offer offer;
@@ -180,6 +181,7 @@ static void show_status(void) {
 
 static void process_state_ready(void) {
     if (!dynip_has()) {
+        dhcp.attempts = 0;
         state = STATE_DHCP_DISCOVER;
     }
 
@@ -258,8 +260,13 @@ static void process_state_dhcp_finish(void) {
 }
 
 static void process_state_dhcp_failed(void) {
-    dynip_set(default_ip, default_mask, STATIC_IP_RENT_MS);
-    state = STATE_READY;
+    dhcp.attempts ++;
+    if (dhcp.attempts > DHCP_RETRY_ATTEMPTS) {
+        dynip_set(default_ip, default_mask, STATIC_IP_RENT_MS);
+        state = STATE_READY;
+    } else {
+        state = STATE_DHCP_DISCOVER;
+    }
 }
 
 static void process(void) {
@@ -317,7 +324,7 @@ void drv_udpsrv_init(
 
         struct mod_timer_cfg timer_cfg = timer_default_cfg();
         timer_cfg.enable = true;
-        timer_cfg.trigger_value = 4000;
+        timer_cfg.trigger_value = 8000;
         timer_cfg.interrupt.trigger = true;
 
         nvic_irq_en(MOD_NVIC_IRQ_TIMER1, false);
